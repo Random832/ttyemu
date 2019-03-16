@@ -1,5 +1,7 @@
 Terminal emulator for ASR-33.
 
+![screenshot](screenshot.png)
+
 Features:
 
 - Pygame and Tkinter frontends.
