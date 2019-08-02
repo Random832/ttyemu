@@ -104,7 +104,15 @@ class TkinterFrontend:
         bg='#%02x%02x%02x' % background_color()
         self.terminal = terminal
         self.root = tkinter.Tk()
-        font = tkinter.font.nametofont("TkFixedFont").actual()
+        if 'Teleprinter' in tkinter.font.families(self.root):
+            # http://www.zanzig.com/download/
+            font = tkinter.font.Font(family='Teleprinter').actual()
+            font['weight'] = 'bold'
+        elif 'TELETYPE 1945-1985' in tkinter.font.families(self.root):
+            # https://www.dafont.com/teletype-1945-1985.font
+            font = tkinter.font.Font(family='TELETYPE 1945-1985').actual()
+        else:
+            font = tkinter.font.nametofont('TkFixedFont').actual()
         font['size'] = 16
         font = tkinter.font.Font(**font)
         self.font = font
