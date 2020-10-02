@@ -26,13 +26,80 @@ except ImportError:
 COLUMNS = 72
 TEXT_COLOR = (0x33, 0x33, 0x33)
 
-def upper(char):
-    "Converts a character to uppercase in the dumbest way possible."
-    char = ord(char)
-    char = (char - 32) & 127
-    if char > 64:
-        char = 32 | (char & 31)
-    return chr(char+32)
+def UPPER(byte):
+    if byte >= 96:
+        return byte & 31 | 64
+    else:
+        return byte
+
+def CHR(byte):
+    return chr(UPPER(byte & 127))
+
+def ORD(byte):
+    if strict_case: return UPPER(ord(byte))
+    else: return ord(byte)
+
+def parityof(byte, lookup=0x6996966996696996966969966996966996696996699696696996966996696996):
+    return (lookup >> byte) & 1
+check_parity = None
+generate_parity = None
+strict_case = False
+
+# calling these decode/encode but they mostly do parity checking
+def decode(data):
+    chars = []
+    if check_parity is None:
+        for byte in data:
+            chars.append(CHR(byte))
+    elif check_parity == 'even':
+        for byte in data:
+            if not parityof(byte):
+                chars.append(CHR(byte))
+    elif check_parity == 'odd':
+        for byte in data:
+            if parityof(byte):
+                chars.append(CHR(byte))
+    elif check_parity == 'mark':
+        for byte in data:
+            if byte & 0x80:
+                chars.append(CHR(byte))
+    elif check_parity == 'space':
+        for byte in data:
+            if not byte & 0x80:
+                chars.append(CHR(byte))
+    else:
+        # todo maybe add 8-bit clean, UTF-8?
+        for byte in data:
+            chars.append(CHR(byte))
+    return ''.join(chars)
+
+def encode(chars):
+    if generate_parity is None:
+        return bytes(ORD(c) for c in chars)
+    elif generate_parity == 'even':
+        d = []
+        for c in chars:
+            b = ORD(c)
+            if parityof(b):
+                b ^= 128
+            d.append(b)
+        return bytes(d)
+    elif generate_parity == 'odd':
+        d = []
+        for c in chars:
+            b = ORD(c)
+            if not parityof(b):
+                b ^= 128
+            d.append(b)
+        return bytes(d)
+    elif generate_parity == 'mark':
+        return bytes(ORD(c)|128 for c in chars)
+    elif generate_parity == 'space':
+        return bytes(ORD(c)&127 for c in chars)
+    else:
+        # shouldn't happen
+        return bytes(ORD(c) for c in chars)
+
 
 def background_color():
     "Return a background color."
@@ -374,7 +441,7 @@ class DummyFrontend:
     def mainloop(self, terminal):
         self.terminal = terminal
         while True:
-            chars = sys.stdin.buffer.read1(1).decode('ascii', 'replace')
+            chars = decode(sys.stdin.buffer.read1(1))
             if not chars:
                 return
             terminal.backend.write_char(chars)
@@ -425,7 +492,6 @@ class Terminal:
         elif char == '\f':
             self.reinit()
         elif char >= ' ':
-            char = upper(char)
             self.alloc_line(self.line).place_char(self.column, char)
             self.frontend.draw_char(self.line, self.column, char)
             self.column += 1
@@ -513,7 +579,7 @@ class ParamikoBackend:
     def write_char(self, char):
         "Sends a keyboard character to the host"
         if self.channel is not None:
-            self.channel.send(char.encode())
+            self.channel.send(encode(char))
         else:
             self.postchars(char)
 
@@ -530,12 +596,12 @@ class ParamikoBackend:
                 data = self.channel.recv(1024)
                 if not data:
                     break
-                self.postchars(data.decode('ascii', 'replace'))
+                self.postchars(decode(data))
             else:
                 byte = self.channel.recv(1)
                 if not byte:
                     break
-                self.postchars(byte.decode('ascii', 'replace'))
+                self.postchars(decode(byte))
                 time.sleep(0.1)
         self.channel = None
         self.postchars("Disconnected. Local mode.\r\n")
@@ -556,7 +622,7 @@ class FiledescBackend(abc.ABC):
         if self.write_fd is not None:
             if self.crmod:
                 char = char.replace('\r', '\n')
-            os.write(self.write_fd, char.encode())
+            os.write(self.write_fd, encode(char))
             if self.lecho:
                 if self.crmod:
                     char = char.replace('\n', '\r\n')
@@ -584,14 +650,14 @@ class FiledescBackend(abc.ABC):
                     break
                 if self.crmod:
                     data = data.replace(b'\n', b'\r\n')
-                self.postchars(data.decode('ascii', 'replace'))
+                self.postchars(decode(data))
             else:
                 byte = os.read(self.read_fd, 1)
                 if not byte:
                     break
                 if self.crmod:
                     byte = byte.replace(b'\n', b'\r\n')
-                self.postchars(byte.decode('ascii', 'replace'))
+                self.postchars(decode(byte))
                 time.sleep(0.1)
         self.teardown()
         self.postchars("Disconnected. Local mode.\r\n")
@@ -670,6 +736,19 @@ def main(frontend, backend):
     backend_thread = threading.Thread(target=backend.thread_target)
     backend_thread.start()
     frontend.mainloop(my_term)
+
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description='Teletype Emulator')
+    parser.add_argument('--check-parity', choices=['even', 'odd', 'mark', 'space', 'none'], default='none')
+    parser.add_argument('--generate-parity', choices=['even', 'odd', 'mark', 'space', 'none'], default='none')
+    parser.add_argument('--strict-case', action='store_true')
+    args = parser.parse_args()
+    check_parity = args.check_parity.casefold()
+    generate_parity = args.generate_parity.casefold()
+    if check_parity == 'none': check_parity = None
+    if generate_parity == 'none': generate_parity = None
+    strict_case = args.strict_case
 
 main(TkinterFrontend(), PtyBackend('sh'))
 #main(PygameFrontend(), LoopbackBackend())
